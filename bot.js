@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync, unlinkSync } from "fs";
 import { createInterface } from "readline";
+import { spawnSync } from "child_process";
 
 // --- Логирование и в консоль, и в файл bot.log (чтобы видеть ошибки даже при закрытом окне) ---
 const _origLog = console.log.bind(console);
@@ -19,6 +20,34 @@ try {
     }
   }
 } catch {}
+
+function isProcessRunning(pid) {
+  try {
+    const r = spawnSync("tasklist", ["/fi", `PID eq ${pid}`, "/nh"], { encoding: "utf8" });
+    return r.stdout.includes(String(pid));
+  } catch {
+    return false;
+  }
+}
+
+const LOCK_FILE = ".bot.lock";
+function acquireLock() {
+  if (existsSync(LOCK_FILE)) {
+    const pid = parseInt(readFileSync(LOCK_FILE, "utf8").trim(), 10);
+    if (pid && isProcessRunning(pid)) {
+      console.error(
+        `Бот уже запущен (PID ${pid}). Закрой ту копию или заверши node.exe в Диспетчере задач.`,
+      );
+      process.exit(1);
+    }
+  }
+  writeFileSync(LOCK_FILE, String(process.pid));
+  process.on("exit", () => {
+    try {
+      if (readFileSync(LOCK_FILE, "utf8").trim() === String(process.pid)) unlinkSync(LOCK_FILE);
+    } catch {}
+  });
+}
 
 let TELEGRAM_API = "";
 
@@ -76,6 +105,9 @@ async function askGemini(prompt) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
+      systemInstruction: {
+        parts: [{ text: "Отвечай на том же языке, на котором пишет пользователь. Если пользователь пишет по-русски — отвечай по-русски. Будь дружелюбным и кратким." }],
+      },
       generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
     }),
   });
@@ -139,6 +171,7 @@ async function poll() {
 }
 
 async function main() {
+  acquireLock();
   await ensureKeys();
   const dw = await fetch(`${TELEGRAM_API}/deleteWebhook`).then((r) => r.json()).catch((e) => ({ error: String(e) }));
   console.log("deleteWebhook:", JSON.stringify(dw));
