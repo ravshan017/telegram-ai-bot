@@ -15,4 +15,5 @@ if not exist ".env" (
 echo Запуск Telegram AI бота (long polling)...
 echo Для остановки нажми Ctrl+C в этом окне.
 echo.
-node --env-file=.env bot.js
+node bot.js
+pause

@@ -1,3 +1,17 @@
+import { readFileSync } from "fs";
+
+// Минимальный загрузчик .env без зависимостей, чтобы бот запускался
+// в любом Node и любым способом (двойной клик по .bat, терминал и т.д.).
+try {
+  const raw = readFileSync(".env", "utf8");
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) {
+      process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+  }
+} catch {}
+
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 
 // Модель Gemini. Бесплатный флаш-вариант. При желании смени на
