@@ -1,5 +1,13 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
 import { createInterface } from "readline";
+
+// --- Логирование и в консоль, и в файл bot.log (чтобы видеть ошибки даже при закрытом окне) ---
+const _origLog = console.log.bind(console);
+const _origErr = console.error.bind(console);
+const fmt = (a) => a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+const stamp = () => `[${new Date().toISOString()}] `;
+console.log = (...a) => { _origLog(...a); try { appendFileSync("bot.log", stamp() + fmt(a) + "\n"); } catch {} };
+console.error = (...a) => { _origErr(...a); try { appendFileSync("bot.log", stamp() + fmt(a) + "\n"); } catch {} };
 
 // Загрузчик .env без зависимостей, чтобы бот запускался любым способом.
 try {
@@ -48,14 +56,16 @@ async function ensureKeys() {
 
 const GEMINI_MODEL = "gemini-3.6-flash";
 let offset = 0;
+let last409Log = 0;
 
 async function sendTelegram(chatId, text) {
   const safe = String(text).slice(0, 4000);
-  await fetch(`${TELEGRAM_API}/sendMessage`, {
+  const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text: safe }),
-  }).catch(() => {});
+  });
+  if (!res.ok) console.error("sendMessage HTTP", res.status);
 }
 
 async function askGemini(prompt) {
@@ -72,13 +82,14 @@ async function askGemini(prompt) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     console.error("Gemini HTTP", res.status, JSON.stringify(data));
-    return "Ошибка ИИ (HTTP " + res.status + "). Подробности в окне запуска.";
+    return "Ошибка ИИ (HTTP " + res.status + "). Подробности в bot.log.";
   }
   const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!out) {
     console.error("Gemini raw response:", JSON.stringify(data));
-    return "Не удалось получить ответ от ИИ. Подробности в окне запуска.";
+    return "Не удалось получить ответ от ИИ. Подробности в bot.log.";
   }
+  console.log("Gemini ответил:", out.slice(0, 120).replace(/\n/g, " "));
   return out;
 }
 
@@ -98,11 +109,17 @@ async function poll() {
     const data = await res.json();
     if (!data.ok) {
       if (data.error_code === 409) {
-        console.error(
-          "ОШИБКА 409: запущено несколько копий бота. Закрой ВСЕ окна бота " +
-            "и запусти start-bot.bat только ОДИН раз.",
-        );
-        process.exit(1);
+        const now = Date.now();
+        if (now - last409Log > 10000) {
+          last409Log = now;
+          console.error(
+            "409: конфликт getUpdates. Возможно, запущено несколько копий бота " +
+              "или висит webhook. Пытаюсь снять webhook...",
+          );
+        }
+        // Пытаемся снять возможный webhook и продолжаем.
+        fetch(`${TELEGRAM_API}/deleteWebhook`).catch(() => {});
+        return;
       }
       console.error("getUpdates error:", data);
       return;
@@ -111,6 +128,7 @@ async function poll() {
       offset = upd.update_id + 1;
       const msg = upd.message;
       if (msg?.text && msg?.chat?.id) {
+        console.log("Получено от", msg.chat.id, ":", msg.text);
         const reply = await handle(msg.text, msg.chat.id);
         await sendTelegram(msg.chat.id, reply);
       }
@@ -122,10 +140,8 @@ async function poll() {
 
 async function main() {
   await ensureKeys();
-  // Сбрасываем webhook, чтобы long polling (getUpdates) точно работал.
-  try {
-    await fetch(`${TELEGRAM_API}/deleteWebhook`);
-  } catch {}
+  const dw = await fetch(`${TELEGRAM_API}/deleteWebhook`).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+  console.log("deleteWebhook:", JSON.stringify(dw));
 
   console.log("Бот запущен (long polling). Ctrl+C — остановить.");
   poll();
