@@ -1,7 +1,7 @@
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { createInterface } from "readline";
 
-// Минимальный загрузчик .env без зависимостей, чтобы бот запускался
-// в любом Node и любым способом (двойной клик по .bat, терминал и т.д.).
+// Загрузчик .env без зависимостей, чтобы бот запускался любым способом.
 try {
   const raw = readFileSync(".env", "utf8");
   for (const line of raw.split("\n")) {
@@ -12,14 +12,41 @@ try {
   }
 } catch {}
 
-const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+let TELEGRAM_API = "";
 
-// Модель Gemini. Бесплатный флаш-вариант. При желании смени на
-// "gemini-2.5-flash" (если доступно в твоём регионе).
+// Если ключей нет — спрашиваем один раз и сохраняем в .env.
+async function ensureKeys() {
+  const missing = [];
+  if (!process.env.TELEGRAM_BOT_TOKEN) missing.push("TELEGRAM_BOT_TOKEN");
+  if (!process.env.GEMINI_API_KEY) missing.push("GEMINI_API_KEY");
+
+  if (missing.length === 0) {
+    TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+    return;
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise((res) => rl.question(q, res));
+  console.log("Ключи не найдены. Введи их один раз — сохраню в .env:");
+  for (const key of missing) {
+    const val = (await ask(`${key}: `)).trim();
+    process.env[key] = val;
+  }
+  rl.close();
+
+  const toSave = missing.map((k) => `${k}=${process.env[k]}`);
+  if (existsSync(".env")) {
+    const cur = readFileSync(".env", "utf8");
+    const have = new Set(cur.split("\n").map((l) => l.split("=")[0].trim()));
+    const add = toSave.filter((l) => !have.has(l.split("=")[0].trim()));
+    if (add.length) writeFileSync(".env", cur.replace(/\s*$/, "") + "\n" + add.join("\n") + "\n");
+  } else {
+    writeFileSync(".env", toSave.join("\n") + "\n");
+  }
+  TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
+}
+
 const GEMINI_MODEL = "gemini-2.0-flash";
-const GEMINI_URL =
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
-
 let offset = 0;
 
 async function sendTelegram(chatId, text) {
@@ -32,7 +59,9 @@ async function sendTelegram(chatId, text) {
 }
 
 async function askGemini(prompt) {
-  const res = await fetch(GEMINI_URL, {
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -61,9 +90,7 @@ async function handle(text, chatId) {
 
 async function poll() {
   try {
-    const res = await fetch(
-      `${TELEGRAM_API}/getUpdates?offset=${offset}&timeout=30`,
-    );
+    const res = await fetch(`${TELEGRAM_API}/getUpdates?offset=${offset}&timeout=30`);
     const data = await res.json();
     if (!data.ok) {
       console.error("getUpdates error:", data);
@@ -82,11 +109,16 @@ async function poll() {
   }
 }
 
-// На всякий случай сбрасываем webhook, чтобы getUpdates (long polling) работал.
-try {
-  await fetch(`${TELEGRAM_API}/deleteWebhook`);
-} catch {}
+async function main() {
+  await ensureKeys();
+  // Сбрасываем webhook, чтобы long polling (getUpdates) точно работал.
+  try {
+    await fetch(`${TELEGRAM_API}/deleteWebhook`);
+  } catch {}
 
-console.log("Бот запущен (long polling). Ctrl+C — остановить.");
-poll();
-setInterval(poll, 1000);
+  console.log("Бот запущен (long polling). Ctrl+C — остановить.");
+  poll();
+  setInterval(poll, 1000);
+}
+
+main();
