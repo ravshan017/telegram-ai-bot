@@ -70,10 +70,14 @@ async function askGemini(prompt) {
     }),
   });
   const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error("Gemini HTTP", res.status, JSON.stringify(data));
+    return "Ошибка ИИ (HTTP " + res.status + "). Подробности в окне запуска.";
+  }
   const out = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!out) {
-    if (data?.error) console.error("Gemini error:", data.error);
-    return "Не удалось получить ответ от ИИ.";
+    console.error("Gemini raw response:", JSON.stringify(data));
+    return "Не удалось получить ответ от ИИ. Подробности в окне запуска.";
   }
   return out;
 }
