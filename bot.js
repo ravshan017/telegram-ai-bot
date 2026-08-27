@@ -68,6 +68,11 @@ async function poll() {
   }
 }
 
+// На всякий случай сбрасываем webhook, чтобы getUpdates (long polling) работал.
+try {
+  await fetch(`${TELEGRAM_API}/deleteWebhook`);
+} catch {}
+
 console.log("Бот запущен (long polling). Ctrl+C — остановить.");
 poll();
 setInterval(poll, 1000);
