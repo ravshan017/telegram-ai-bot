@@ -46,7 +46,7 @@ async function ensureKeys() {
   TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 }
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-3.6-flash";
 let offset = 0;
 
 async function sendTelegram(chatId, text) {
@@ -97,6 +97,13 @@ async function poll() {
     const res = await fetch(`${TELEGRAM_API}/getUpdates?offset=${offset}&timeout=30`);
     const data = await res.json();
     if (!data.ok) {
+      if (data.error_code === 409) {
+        console.error(
+          "ОШИБКА 409: запущено несколько копий бота. Закрой ВСЕ окна бота " +
+            "и запусти start-bot.bat только ОДИН раз.",
+        );
+        process.exit(1);
+      }
       console.error("getUpdates error:", data);
       return;
     }
