@@ -1,0 +1,9 @@
+{
+  "name": "telegram-ai-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "set-webhook": "node set-webhook.mjs"
+  }
+}
