@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "node bot.js",
     "set-webhook": "node set-webhook.mjs"
   }
 }
